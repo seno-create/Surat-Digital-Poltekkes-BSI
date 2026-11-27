@@ -12,6 +12,27 @@ export function driveConfigured() {
   );
 }
 
+/**
+ * Rapikan GOOGLE_PRIVATE_KEY apa pun cara menempelnya: dengan/tanpa tanda kutip,
+ * dengan "\\n" literal, baris baru yang berubah jadi spasi, atau seluruh isi file JSON.
+ */
+export function normalizePrivateKey(raw: string): string {
+  let v = raw.trim();
+  if (v.startsWith("{")) {
+    try {
+      v = String(JSON.parse(v).private_key ?? v);
+    } catch {
+      /* bukan JSON utuh, lanjutkan */
+    }
+  }
+  v = v.replace(/^["']+|["',]+$/g, "").replace(/\\r/g, "").replace(/\\n/g, "\n");
+  const m = v.match(/-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/);
+  if (!m) return v;
+  const body = m[2].replace(/[^A-Za-z0-9+/=]/g, "");
+  const lines = body.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN ${m[1]}-----\n${lines.join("\n")}\n-----END ${m[1]}-----\n`;
+}
+
 function getDrive(): drive_v3.Drive {
   if (client) return client;
   if (!driveConfigured()) {
@@ -21,7 +42,7 @@ function getDrive(): drive_v3.Drive {
   }
   const jwt = new auth.JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, "\n"),
+    key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY!),
     scopes: ["https://www.googleapis.com/auth/drive"],
   });
   client = driveApi({ version: "v3", auth: jwt });

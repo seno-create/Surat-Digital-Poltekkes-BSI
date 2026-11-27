@@ -1,0 +1,239 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN // Admin / Tata Usaha
+  PIMPINAN // Direktur / Pimpinan
+  KEPALA_UNIT // Kabag / Kaprodi / Kepala Unit
+  STAF
+}
+
+enum Sifat {
+  BIASA
+  PENTING
+  SEGERA
+  RAHASIA
+}
+
+enum StatusSuratMasuk {
+  BARU
+  DIDISPOSISI
+  SELESAI
+  DIARSIPKAN
+}
+
+enum StatusDisposisi {
+  BELUM_DIBACA
+  DIBACA
+  DIPROSES
+  SELESAI
+}
+
+enum StatusSuratKeluar {
+  DRAFT
+  MENUNGGU_VERIFIKASI
+  REVISI
+  DISETUJUI
+  DITOLAK
+  TERKIRIM
+}
+
+model Unit {
+  id        String   @id @default(cuid())
+  kode      String   @unique
+  nama      String
+  aktif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users       User[]
+  suratKeluar SuratKeluar[]
+}
+
+model Jabatan {
+  id        String   @id @default(cuid())
+  nama      String   @unique
+  level     Int      @default(3) // 1 = pimpinan, 2 = kepala unit, 3 = staf
+  createdAt DateTime @default(now())
+
+  users User[]
+}
+
+model Klasifikasi {
+  id         String   @id @default(cuid())
+  kode       String   @unique
+  nama       String
+  keterangan String?
+  createdAt  DateTime @default(now())
+
+  suratMasuk  SuratMasuk[]
+  suratKeluar SuratKeluar[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  nama         String
+  nip          String?
+  email        String?
+  passwordHash String
+  role         Role     @default(STAF)
+  aktif        Boolean  @default(true)
+  unitId       String?
+  unit         Unit?    @relation(fields: [unitId], references: [id])
+  jabatanId    String?
+  jabatan      Jabatan? @relation(fields: [jabatanId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  suratMasukDibuat   SuratMasuk[]      @relation("SuratMasukDibuat")
+  disposisiDari      Disposisi[]       @relation("DisposisiDari")
+  disposisiKepada    Disposisi[]       @relation("DisposisiKepada")
+  suratKeluarDibuat  SuratKeluar[]     @relation("SuratKeluarDibuat")
+  suratKeluarVerif   SuratKeluar[]     @relation("SuratKeluarVerifikator")
+  suratKeluarLog     SuratKeluarLog[]
+  auditLogs          AuditLog[]
+}
+
+model SuratMasuk {
+  id            String           @id @default(cuid())
+  tahun         Int
+  noUrut        Int
+  nomorAgenda   String           @unique
+  nomorSurat    String
+  tanggalSurat  DateTime         @db.Date
+  tanggalTerima DateTime         @db.Date
+  pengirim      String
+  perihal       String
+  sifat         Sifat            @default(BIASA)
+  lampiran      String?
+  ringkasan     String?
+  klasifikasiId String?
+  klasifikasi   Klasifikasi?     @relation(fields: [klasifikasiId], references: [id])
+  status        StatusSuratMasuk @default(BARU)
+  fileId        String?
+  fileName      String?
+  fileUrl       String?
+  createdById   String
+  createdBy     User             @relation("SuratMasukDibuat", fields: [createdById], references: [id])
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  disposisi Disposisi[]
+
+  @@unique([tahun, noUrut])
+  @@index([tanggalTerima])
+  @@index([status])
+}
+
+model Disposisi {
+  id           String          @id @default(cuid())
+  suratMasukId String
+  suratMasuk   SuratMasuk      @relation(fields: [suratMasukId], references: [id], onDelete: Cascade)
+  parentId     String?
+  parent       Disposisi?      @relation("DisposisiTurunan", fields: [parentId], references: [id])
+  turunan      Disposisi[]     @relation("DisposisiTurunan")
+  dariId       String
+  dari         User            @relation("DisposisiDari", fields: [dariId], references: [id])
+  kepadaId     String
+  kepada       User            @relation("DisposisiKepada", fields: [kepadaId], references: [id])
+  instruksi    String
+  catatan      String?
+  batasWaktu   DateTime?       @db.Date
+  status       StatusDisposisi @default(BELUM_DIBACA)
+  tanggapan    String?
+  dibacaAt     DateTime?
+  selesaiAt    DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([kepadaId, status])
+  @@index([suratMasukId])
+}
+
+model TemplateSurat {
+  id         String   @id @default(cuid())
+  nama       String
+  jenis      String   @default("Surat Dinas")
+  isi        String // teks dengan placeholder {{tujuan}}, {{perihal}}, {{tanggal}}, {{nomor}}, dll.
+  aktif      Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  suratKeluar SuratKeluar[]
+}
+
+model SuratKeluar {
+  id                String            @id @default(cuid())
+  tahun             Int?
+  noUrut            Int?
+  nomorSurat        String?           @unique
+  klasifikasiId     String
+  klasifikasi       Klasifikasi       @relation(fields: [klasifikasiId], references: [id])
+  unitId            String
+  unit              Unit              @relation(fields: [unitId], references: [id])
+  templateId        String?
+  template          TemplateSurat?    @relation(fields: [templateId], references: [id])
+  tanggalSurat      DateTime?         @db.Date
+  tujuan            String
+  perihal           String
+  sifat             Sifat             @default(BIASA)
+  lampiran          String?
+  isi               String
+  penandatangan     String?
+  status            StatusSuratKeluar @default(DRAFT)
+  verifikatorId     String?
+  verifikator       User?             @relation("SuratKeluarVerifikator", fields: [verifikatorId], references: [id])
+  catatanVerifikasi String?
+  fileId            String?
+  fileName          String?
+  fileUrl           String?
+  createdById       String
+  createdBy         User              @relation("SuratKeluarDibuat", fields: [createdById], references: [id])
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  logs SuratKeluarLog[]
+
+  @@unique([tahun, noUrut])
+  @@index([status])
+}
+
+model SuratKeluarLog {
+  id            String            @id @default(cuid())
+  suratKeluarId String
+  suratKeluar   SuratKeluar       @relation(fields: [suratKeluarId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User              @relation(fields: [userId], references: [id])
+  status        StatusSuratKeluar
+  catatan       String?
+  createdAt     DateTime          @default(now())
+
+  @@index([suratKeluarId])
+}
+
+// Penghitung atomik untuk nomor agenda & nomor surat, mis. key "SM-2026" / "SK-2026"
+model Counter {
+  key   String @id
+  value Int    @default(0)
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  aksi      String
+  entitas   String
+  entitasId String?
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entitas, entitasId])
+}
